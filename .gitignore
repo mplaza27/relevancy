@@ -33,3 +33,4 @@ node_modules/
 
 # Scripts output
 scripts/output/
+reserve_oracle.sh
