@@ -1,0 +1,14 @@
+[project]
+name = "relevancy"
+version = "0.1.0"
+description = "Match lecture materials to Anki flashcards by semantic relevancy"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
