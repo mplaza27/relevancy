@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { similarityClass, similarityColor } from "@/lib/similarity-colors";
+import { similarityColor } from "@/lib/similarity-colors";
 import type { MatchedCard } from "@/types";
 import { X, Check, Square } from "lucide-react";
 
