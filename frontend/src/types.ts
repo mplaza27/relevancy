@@ -19,5 +19,6 @@ export interface UploadResponse {
   file_count: number;
   total_chunks: number;
   match_count: number;
+  keywords: string[];
   status: string;
 }

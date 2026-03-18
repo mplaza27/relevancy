@@ -6,6 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
 
+[tool.uv.workspace]
+members = ["backend", "packages/anki_parser"]
+
+[tool.uv.sources]
+anki-parser = { workspace = true }
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

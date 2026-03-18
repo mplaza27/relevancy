@@ -5,12 +5,15 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.database import close_pool, get_pool, init_pool
-from app.embeddings import embed_query, is_loaded, load_model
+from app.embeddings import embed_query, is_loaded, load_model, is_cross_encoder_loaded, load_cross_encoder
+from app.limiter import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +24,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Loading embedding model: %s", settings.embedding_model)
     await asyncio.to_thread(load_model, settings.embedding_model)
     logger.info("Embedding model loaded.")
+
+    if settings.enable_cross_encoder:
+        logger.info("Loading cross-encoder: %s", settings.cross_encoder_model)
+        await asyncio.to_thread(load_cross_encoder, settings.cross_encoder_model)
+        logger.info("Cross-encoder loaded.")
 
     if settings.database_url:
         logger.info("Initializing database pool ...")
@@ -43,6 +51,12 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Try again shortly."})
 
 app.add_middleware(
     CORSMiddleware,
@@ -90,5 +104,12 @@ async def health_check() -> dict:
     return {
         "status": "ok",
         "model_loaded": is_loaded(),
+        "cross_encoder_loaded": is_cross_encoder_loaded(),
         "db_connected": db_connected,
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("app.main:app", host="0.0.0.0", port=settings.port, reload=True)

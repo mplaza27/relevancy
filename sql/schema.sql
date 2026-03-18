@@ -17,15 +17,19 @@ CREATE TABLE anki_notes (
     extra       TEXT DEFAULT '',                       -- Extra field content (cleaned)
     tags        TEXT[] DEFAULT '{}',                   -- Array of tag strings
     raw_fields  JSONB DEFAULT '{}',                    -- All original field values (for display)
-    embedding   vector(384) NOT NULL,                  -- Pre-computed embedding (all-MiniLM-L6-v2)
+    embedding   vector(768) NOT NULL,                  -- Pre-computed embedding (BioLORD-2023)
+    textsearch  tsvector,                              -- BM25 full-text search
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- HNSW index for fast cosine similarity search
--- m=16, ef_construction=100 provides good recall/speed balance
+-- m=16, ef_construction=128 provides good recall/speed balance
 CREATE INDEX idx_anki_notes_embedding
     ON anki_notes USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 100);
+    WITH (m = 16, ef_construction = 128);
+
+-- GIN index for BM25 full-text search
+CREATE INDEX idx_anki_notes_textsearch ON anki_notes USING GIN (textsearch);
 
 -- B-tree indexes for filtered queries
 CREATE INDEX idx_anki_notes_notetype ON anki_notes (notetype);
@@ -54,14 +58,14 @@ CREATE TABLE document_chunks (
     filename    TEXT NOT NULL,
     chunk_index INTEGER NOT NULL,
     text        TEXT NOT NULL,
-    embedding   vector(384) NOT NULL,
+    embedding   vector(768) NOT NULL,
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_chunks_session ON document_chunks (session_id);
 CREATE INDEX idx_chunks_embedding
     ON document_chunks USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 100);
+    WITH (m = 16, ef_construction = 128);
 
 -- ============================================
 -- Match Results (cached per session)
@@ -99,7 +103,7 @@ $$ LANGUAGE plpgsql;
 -- Uses cosine distance: similarity = 1 - cosine_distance
 -- Embeddings must be pre-normalized (L2 norm = 1.0) for correct results.
 CREATE OR REPLACE FUNCTION match_anki_notes(
-    query_embedding  vector(384),
+    query_embedding  vector(768),
     match_count      INT DEFAULT 100,
     match_threshold  FLOAT DEFAULT 0.0,
     filter_notetype  TEXT DEFAULT NULL,

@@ -1,122 +1,87 @@
-import { useMemo } from "react";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
+import { similarityClass } from "@/lib/similarity-colors";
 import type { MatchedCard } from "@/types";
-
-const RESOURCE_FIELDS = [
-  "Pathoma",
-  "Boards and Beyond",
-  "First Aid",
-  "Sketchy",
-  "OME",
-  "Additional Resources",
-];
-
-const MAX_VISIBLE_TAGS = 6;
-
-function formatTag(tag: string): string {
-  return tag
-    .replace(/^#/, "")
-    .replace(/AK_Other::/g, "")
-    .replace(/AK_Step1_v12::/g, "Step1 > ")
-    .replace(/AK_Step2_v12::/g, "Step2 > ")
-    .replaceAll("::", " > ");
-}
-
-function CardTags({ tags }: { tags: string[] }) {
-  const formatted = useMemo(() => tags.map(formatTag), [tags]);
-  const visible = formatted.slice(0, MAX_VISIBLE_TAGS);
-  const extra = formatted.length - MAX_VISIBLE_TAGS;
-
-  return (
-    <div className="flex flex-wrap gap-1">
-      {visible.map((tag, i) => (
-        <Badge key={i} variant="secondary" className="text-xs font-normal">
-          {tag}
-        </Badge>
-      ))}
-      {extra > 0 && (
-        <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
-          +{extra} more
-        </Badge>
-      )}
-    </div>
-  );
-}
-
-function CardDetail({ card }: { card: MatchedCard }) {
-  const resourceEntries = RESOURCE_FIELDS
-    .map(field => ({ field, value: card.raw_fields[field] }))
-    .filter(({ value }) => value && value.trim() && value.trim() !== "");
-
-  return (
-    <div className="space-y-3 pt-2">
-      {card.extra && (
-        <div>
-          <p className="text-xs font-medium text-muted-foreground mb-1">Extra</p>
-          <p className="text-sm">{card.extra}</p>
-        </div>
-      )}
-
-      {resourceEntries.map(({ field, value }) => (
-        <div key={field}>
-          <p className="text-xs font-medium text-muted-foreground mb-1">{field}</p>
-          <p className="text-sm">{value}</p>
-        </div>
-      ))}
-
-      {card.tags.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-muted-foreground mb-1">Tags</p>
-          <CardTags tags={card.tags} />
-        </div>
-      )}
-    </div>
-  );
-}
+import { Check, X } from "lucide-react";
 
 interface Props {
   cards: MatchedCard[];
+  selectedIds: Set<number>;
+  onToggleSelect: (noteId: number) => void;
+  onHover: (noteId: number | null) => void;
+  onPin: (noteId: number) => void;
+  pinnedId: number | null;
 }
 
-export function CardList({ cards }: Props) {
+export function CardList({ cards, selectedIds, onToggleSelect, onHover, onPin, pinnedId }: Props) {
   if (cards.length === 0) {
     return (
-      <p className="text-center text-muted-foreground py-8">
+      <p className="text-center text-[#646469] py-8">
         No cards match at this threshold. Try lowering the slider.
       </p>
     );
   }
 
   return (
-    <Accordion type="multiple" className="space-y-1">
-      {cards.map(card => (
-        <AccordionItem
-          key={card.note_id}
-          value={String(card.note_id)}
-          className="border rounded-md px-3"
-        >
-          <AccordionTrigger className="hover:no-underline py-3">
-            <div className="flex items-center gap-3 text-left w-full min-w-0">
-              <Badge
-                variant="outline"
-                className="shrink-0 font-mono text-xs"
-              >
-                {(card.similarity * 100).toFixed(0)}%
-              </Badge>
-              <span className="truncate flex-1 text-sm">{card.text}</span>
-            </div>
-          </AccordionTrigger>
-          <AccordionContent>
-            <CardDetail card={card} />
-          </AccordionContent>
-        </AccordionItem>
-      ))}
-    </Accordion>
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {cards.map((card) => {
+        const selected = selectedIds.has(card.note_id);
+        const isPinned = pinnedId === card.note_id;
+
+        return (
+          <div
+            key={card.note_id}
+            className={`
+              relative group rounded-lg border p-3 cursor-pointer
+              transition-all duration-150 select-none
+              ${isPinned ? "ring-2 ring-[#3172ae] border-[#3172ae]" : "border-[#d1d5db]"}
+              ${selected
+                ? "bg-white hover:shadow-md"
+                : "bg-[#f1f1f1] opacity-40"
+              }
+            `}
+            onMouseEnter={() => onHover(card.note_id)}
+            onMouseLeave={() => onHover(null)}
+            onClick={() => onPin(card.note_id)}
+          >
+            {/* Select/deselect checkbox */}
+            <button
+              className={`
+                absolute top-2 right-2 w-5 h-5 rounded border flex items-center justify-center
+                transition-colors z-10
+                ${selected
+                  ? "bg-[#3172ae] border-[#3172ae] text-white"
+                  : "bg-white border-[#d1d5db] text-[#d1d5db] hover:border-[#3172ae]"
+                }
+              `}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleSelect(card.note_id);
+              }}
+              title={selected ? "Deselect card" : "Re-select card"}
+            >
+              {selected ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
+            </button>
+
+            {/* Similarity badge */}
+            <Badge
+              variant="outline"
+              className={`font-mono text-xs border mb-2 ${similarityClass(card.similarity)}`}
+            >
+              {(card.similarity * 100).toFixed(0)}%
+            </Badge>
+
+            {/* Card text preview */}
+            <p className="text-sm leading-snug line-clamp-3 pr-5">
+              {card.text}
+            </p>
+
+            {/* Notetype label */}
+            <p className="text-[10px] text-[#646469] mt-2 font-mono truncate">
+              {card.notetype}
+            </p>
+          </div>
+        );
+      })}
+    </div>
   );
 }

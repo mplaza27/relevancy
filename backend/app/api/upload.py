@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from collections import Counter
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
 from app.config import settings
+from app.limiter import limiter
 from app.database import get_db, get_pool
 from app.embeddings import embed_texts
 from app.services.chunker import chunk_text
 from app.services.document_parser import SUPPORTED_EXTENSIONS, extract_text
 from app.services.matcher import run_matching
+from app.services.search import extract_search_terms
 
 router = APIRouter()
 
@@ -41,8 +44,11 @@ async def _save_to_temp(file: UploadFile) -> Path:
 
 
 @router.post("/upload")
+@limiter.limit("10/minute")
 async def upload_and_match(
+    request: Request,
     files: list[UploadFile] = File(...),
+    max_results: int = Query(default=100, ge=1, le=2000),
 ) -> dict:
     """Upload one or more documents and match against Anki notes.
 
@@ -124,8 +130,26 @@ async def upload_and_match(
                 ],
             )
 
+        # Extract keywords from document chunks
+        word_counts: Counter[str] = Counter()
+        for t in texts:
+            terms_str = extract_search_terms(t, max_terms=50)
+            if terms_str:
+                for term in terms_str.split(" | "):
+                    word_counts[term] += 1
+        keywords = [w for w, _ in word_counts.most_common(30)]
+
         # Run matching
-        results = await run_matching(pool, session_id, embeddings)
+        results = await run_matching(
+            pool, session_id, embeddings, chunk_texts=texts, max_results=max_results,
+        )
+
+        # Delete user document chunks — only match results are needed from here
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM document_chunks WHERE session_id=$1",
+                session_id,
+            )
 
         # Update session status
         async with pool.acquire() as conn:
@@ -152,5 +176,6 @@ async def upload_and_match(
         "file_count": len(files),
         "total_chunks": len(all_chunk_records),
         "match_count": len(results),
+        "keywords": keywords,
         "status": "done",
     }

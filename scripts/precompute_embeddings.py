@@ -23,8 +23,9 @@ APKG_PATH = Path(__file__).parent.parent / "anking" / "AnKing Step Deck.apkg"
 OUTPUT_DIR = Path(__file__).parent / "output"
 OUTPUT_FILE = OUTPUT_DIR / "embeddings.jsonl"
 
-# Max characters to feed into embedding model (~225 tokens at ~4 chars/token)
-MAX_CHARS = 900
+# Max characters to feed into embedding model (~450 tokens at ~4 chars/token)
+# BioLORD-2023 supports 512 tokens, keep ~88% safety margin
+MAX_CHARS = 1800
 
 
 def prepare_note_text(note, notetype_name: str) -> str:
@@ -119,7 +120,7 @@ def main() -> None:
     print(f"Loading sentence-transformers model on {args.device} ...")
     from sentence_transformers import SentenceTransformer
 
-    model = SentenceTransformer("all-MiniLM-L6-v2", device=args.device)
+    model = SentenceTransformer("FremyCompany/BioLORD-2023", device=args.device)
 
     texts = [r["text"] for r in records]
     print(f"Encoding {len(texts):,} texts (batch_size={args.batch_size}) ...")

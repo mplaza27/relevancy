@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -55,7 +56,7 @@ async def get_matches(session_id: str) -> dict:
                 "tags": list(row["tags"] or []),
                 "notetype": row["notetype"],
                 "similarity": round(float(row["similarity"]), 4),
-                "raw_fields": dict(row["raw_fields"] or {}),
+                "raw_fields": json.loads(row["raw_fields"]) if isinstance(row["raw_fields"], str) else (row["raw_fields"] or {}),
             }
             for row in rows
         ],

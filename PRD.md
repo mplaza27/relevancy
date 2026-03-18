@@ -30,10 +30,13 @@ Medical students use Anki decks containing tens of thousands of cards (e.g., AnK
 - Strip HTML, extract plain text and cloze content for embedding
 - Store parsed deck in vector database with metadata (tags, deck, note type, card IDs)
 
-### 3. Semantic Relevancy Matching
-- Generate embeddings for both uploaded content and Anki cards
-- Use cosine similarity to rank cards against uploaded material
-- Return ranked list of relevant cards with similarity scores
+### 3. Hybrid Relevancy Matching
+- Generate embeddings using BioLORD-2023 (768-dim, medical-ontology-aware)
+- Hybrid search: pgvector semantic + BM25 full-text with Reciprocal Rank Fusion
+- Cross-encoder reranking (MedCPT-Cross-Encoder) for all candidates
+- User-configurable max results (default 100, up to 2000)
+- Post-cut min-max normalization: scores span exactly 0%–100% within the result set
+- Return ranked list of relevant cards with normalized similarity scores
 
 ### 4. Relevancy Slider
 - Frontend slider control (0.0 - 1.0) adjusting the similarity threshold
@@ -42,13 +45,27 @@ Medical students use Anki decks containing tens of thousands of cards (e.g., AnK
 - Real-time filtering without re-running the embedding pipeline
 
 ### 5. Results Display
-- Show matched cards with:
-  - Card text (rendered from HTML, cloze deletions shown)
-  - Similarity score / relevancy percentage
-  - Tags (hierarchical AnKing tags)
-  - Source field (which part of the upload matched)
-- Sortable by relevancy, tag, or deck section
-- Expandable card detail view (Extra, Pathoma, B&B, Sketchy references)
+- **Compact card grid**: cards as tiles in a responsive grid (1/2/3 columns)
+  - Each tile: similarity badge, truncated text (2-3 lines), select/deselect checkbox
+  - Cards fit neatly in container, consistent sizing
+- **Hover side panel**: hovering a card shows detail panel on right (~400px)
+  - Clicking a card **pins** the panel; clicking another card updates it
+  - Panel shows: full text, extra, similarity score, tags, resource links
+  - Readable and visually appealing as top priority
+  - Mobile: bottom sheet or full-screen overlay
+- **Card deselection**: checkbox on each card, all selected by default
+  - Deselected cards grey out (stay visible), excluded from Anki sync
+  - Can be re-selected
+- **Tag filters**: collapsible filter bar above grid
+  - Multi-select tag badges from current result set
+  - **"Only Step 1"** and **"Only Step 2"** big buttons (mutually exclusive)
+  - Combinable with regular tag filters
+  - Clear filters button
+- **Keyword filters**: significant terms extracted from uploaded document
+  - Clickable chips for strict text matching within card results
+  - Useful for drug names, anatomy, specific diseases
+- **Max results selector**: dropdown on upload form (default 100, options 50/100/250/500/1000)
+- **Jump to bottom**: floating button when scrolled away from bottom
 
 ### 6. Anki Card Control (Suspend/Unsuspend)
 The goal is maximum automation for managing cards in the user's local Anki. **Both methods below are MVP features.**
@@ -102,7 +119,7 @@ These are always shown alongside Method A in the UI:
 | **Frontend** | React + TypeScript (Vite) | Fast, modern, good component ecosystem |
 | **Backend API** | FastAPI (Python) | Async, great for ML workloads, matches Anki tooling |
 | **Vector DB** | pgvector (PostgreSQL via Supabase) | Free tier, pgvector included, 500MB |
-| **Embeddings** | `all-MiniLM-L6-v2` (Sentence Transformers) | Free, fast on CPU, 384-dim vectors (small storage footprint) |
+| **Embeddings** | `BioLORD-2023` + `MedCPT-Cross-Encoder` | Medical-ontology-aware, 768-dim, hybrid search + reranking |
 | **File Processing** | `pymupdf`, `python-pptx`, `python-docx` | Proven Python extraction libraries |
 | **Hosting (Backend)** | Oracle Cloud Always Free | 4 ARM cores, 24GB RAM, always free |
 | **Hosting (Frontend)** | Cloudflare Pages | Unlimited bandwidth, free |
@@ -306,7 +323,7 @@ Supabase free tier pauses databases after 7 days of no activity. For a tool with
 
 ## Non-Functional Requirements
 
-- **Response time**: Card matching results in < 5 seconds for a typical lecture PDF
+- **Response time**: Card matching results in < 60 seconds for a typical lecture PDF (cross-encoder reranking adds ~20-40s)
 - **Upload limit**: 50MB per file, 5 files per session
 - **Concurrent users**: 5-200 supported
 - **No auth required**: Anonymous, session-based

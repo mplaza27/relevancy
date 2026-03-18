@@ -12,8 +12,8 @@ _CHARS_PER_TOKEN = 4.0
 
 def chunk_text(
     text: str,
-    max_tokens: int = 200,
-    overlap_tokens: int = 50,
+    max_tokens: int = 400,
+    overlap_tokens: int = 80,
     chars_per_token: float = _CHARS_PER_TOKEN,
 ) -> list[str]:
     """Split text into overlapping chunks suitable for embedding.
@@ -23,7 +23,7 @@ def chunk_text(
 
     Parameters:
         text: Input text to chunk.
-        max_tokens: Target maximum tokens per chunk (~200 for 256-token limit).
+        max_tokens: Target maximum tokens per chunk (~400 for 512-token limit).
         overlap_tokens: Overlap between consecutive chunks in tokens.
         chars_per_token: Characters per token estimate.
 

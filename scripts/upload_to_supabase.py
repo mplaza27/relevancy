@@ -68,7 +68,7 @@ def main() -> None:
         if args.truncate:
             print("Truncating anki_notes table ...")
             with conn.cursor() as cur:
-                cur.execute("TRUNCATE TABLE anki_notes")
+                cur.execute("TRUNCATE TABLE anki_notes CASCADE")
             conn.commit()
 
         print(f"Inserting {len(records):,} records in batches of {args.batch_size} ...")
@@ -81,13 +81,14 @@ def main() -> None:
 
                 cur.executemany(
                     """
-                    INSERT INTO anki_notes (note_id, notetype, text, tags, embedding)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO anki_notes (note_id, notetype, text, tags, embedding, textsearch)
+                    VALUES (%s, %s, %s, %s, %s, to_tsvector('english', %s))
                     ON CONFLICT (note_id) DO UPDATE
                       SET notetype = EXCLUDED.notetype,
                           text = EXCLUDED.text,
                           tags = EXCLUDED.tags,
-                          embedding = EXCLUDED.embedding
+                          embedding = EXCLUDED.embedding,
+                          textsearch = EXCLUDED.textsearch
                     """,
                     [
                         (
@@ -96,6 +97,7 @@ def main() -> None:
                             r["text"],
                             r["tags"],
                             r["embedding"],
+                            r["text"],
                         )
                         for r in batch
                     ],

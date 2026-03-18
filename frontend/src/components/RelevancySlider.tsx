@@ -10,11 +10,15 @@ interface Props {
 export function RelevancySlider({ value, onChange, totalCards, filteredCards }: Props) {
   return (
     <div className="space-y-3">
-      <div className="flex justify-between items-center">
-        <span className="text-sm font-medium">Relevancy Threshold</span>
-        <span className="text-sm text-muted-foreground font-mono">
-          {filteredCards} / {totalCards} cards
-        </span>
+      <div className="flex justify-between items-end">
+        <div>
+          <span className="text-sm font-medium">Relevancy Threshold</span>
+        </div>
+        <div className="text-right">
+          <span className="font-mono text-4xl font-bold text-[#15314b] leading-none">
+            {(value * 100).toFixed(0)}%
+          </span>
+        </div>
       </div>
 
       <Slider
@@ -26,10 +30,12 @@ export function RelevancySlider({ value, onChange, totalCards, filteredCards }: 
         className="w-full"
       />
 
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>0.0 — More cards</span>
-        <span className="font-mono font-medium text-foreground">{value.toFixed(2)}</span>
-        <span>1.0 — Fewer cards</span>
+      <div className="flex justify-between items-center">
+        <span className="text-xs text-[#646469]">0% — More cards</span>
+        <span className="text-sm font-mono font-medium text-[#3172ae] transition-all duration-200">
+          {filteredCards} / {totalCards} cards
+        </span>
+        <span className="text-xs text-[#646469]">100% — Fewer cards</span>
       </div>
     </div>
   );
