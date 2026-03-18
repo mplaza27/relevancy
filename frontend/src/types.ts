@@ -11,6 +11,7 @@ export interface MatchedCard {
 export interface MatchResults {
   session_id: string;
   status: string;
+  keywords: string[];
   cards: MatchedCard[];
 }
 

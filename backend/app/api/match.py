@@ -14,8 +14,8 @@ router = APIRouter()
 async def get_matches(session_id: str) -> dict:
     """Retrieve cached match results for a session.
 
-    Returns all matched Anki notes sorted by similarity descending.
-    The frontend applies the relevancy threshold slider client-side.
+    Returns status 'processing' with empty cards while the background task runs.
+    Returns status 'done' with full results when complete.
     """
     pool = get_pool()
 
@@ -25,13 +25,20 @@ async def get_matches(session_id: str) -> dict:
         raise HTTPException(400, "Invalid session_id format")
 
     async with pool.acquire() as conn:
-        # Verify session exists
         session = await conn.fetchrow(
-            "SELECT id, status FROM upload_sessions WHERE id=$1",
+            "SELECT id, status, keywords FROM upload_sessions WHERE id=$1",
             sid,
         )
         if not session:
             raise HTTPException(404, "Session not found")
+
+        if session["status"] != "done":
+            return {
+                "session_id": session_id,
+                "status": session["status"],
+                "keywords": list(session["keywords"] or []),
+                "cards": [],
+            }
 
         rows = await conn.fetch(
             """
@@ -48,6 +55,7 @@ async def get_matches(session_id: str) -> dict:
     return {
         "session_id": session_id,
         "status": session["status"],
+        "keywords": list(session["keywords"] or []),
         "cards": [
             {
                 "note_id": row["note_id"],

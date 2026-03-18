@@ -30,6 +30,7 @@ node_modules/
 
 # Temp files
 *.tmp
+temp.md
 
 # Scripts output
 scripts/output/

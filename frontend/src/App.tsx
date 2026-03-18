@@ -137,20 +137,44 @@ export default function App() {
     };
   }, [loading]);
 
-  const handleUploadComplete = async (sessionId: string, uploadKeywords: string[]) => {
+  const handleUploadComplete = (sessionId: string, uploadKeywords: string[]) => {
     setLoading(true);
     setLoadError(null);
     setKeywords(uploadKeywords);
-    try {
-      const res = await fetch(`${API_URL}/api/match/${sessionId}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: MatchResults = await res.json();
-      setResults(data);
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to fetch results");
-    } finally {
-      setLoading(false);
-    }
+
+    const POLL_INTERVAL = 3000;
+    const MAX_ATTEMPTS = 80; // ~4 minutes
+    let attempts = 0;
+
+    const poll = async () => {
+      try {
+        attempts++;
+        const res = await fetch(`${API_URL}/api/match/${sessionId}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data: MatchResults = await res.json();
+
+        if (data.status === "processing") {
+          if (attempts >= MAX_ATTEMPTS) {
+            setLoadError("Processing timed out — please try again.");
+            setLoading(false);
+            return;
+          }
+          setTimeout(poll, POLL_INTERVAL);
+        } else if (data.status === "error") {
+          setLoadError("Processing failed on the server — please try again.");
+          setLoading(false);
+        } else {
+          if (data.keywords.length > 0) setKeywords(data.keywords);
+          setResults(data);
+          setLoading(false);
+        }
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : "Failed to fetch results");
+        setLoading(false);
+      }
+    };
+
+    poll();
   };
 
   // Sync note IDs = selected cards that pass all filters

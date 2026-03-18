@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import tempfile
 from collections import Counter
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 
 from app.config import settings
 from app.limiter import limiter
@@ -16,6 +17,8 @@ from app.services.chunker import chunk_text
 from app.services.document_parser import SUPPORTED_EXTENSIONS, extract_text
 from app.services.matcher import run_matching
 from app.services.search import extract_search_terms
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -43,71 +46,14 @@ async def _save_to_temp(file: UploadFile) -> Path:
     return tmp_path
 
 
-@router.post("/upload")
-@limiter.limit("10/minute")
-async def upload_and_match(
-    request: Request,
-    files: list[UploadFile] = File(...),
-    max_results: int = Query(default=100, ge=1, le=2000),
-) -> dict:
-    """Upload one or more documents and match against Anki notes.
-
-    Returns session_id which can be used to retrieve results.
-    """
-    pool = get_pool()
-
-    if not files:
-        raise HTTPException(400, "No files provided")
-    if len(files) > settings.max_files_per_session:
-        raise HTTPException(400, f"Max {settings.max_files_per_session} files per upload")
-
-    # Validate file types
-    for file in files:
-        suffix = Path(file.filename or "").suffix.lower()
-        if suffix not in SUPPORTED_EXTENSIONS:
-            raise HTTPException(
-                400,
-                f"Unsupported file type: {suffix!r}. "
-                f"Supported: {sorted(SUPPORTED_EXTENSIONS)}",
-            )
-
-    session_id = uuid4()
-
-    # Create session record
-    async with pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO upload_sessions (id, file_count, status)
-            VALUES ($1, $2, 'processing')
-            """,
-            session_id,
-            len(files),
-        )
-
-    temp_paths: list[Path] = []
+async def _process_in_background(
+    pool,
+    session_id: UUID,
+    all_chunk_records: list[dict],
+    max_results: int,
+) -> None:
+    """Embed chunks, run matching, and store results. Updates session status when done."""
     try:
-        # Build chunk list across all files
-        all_chunk_records: list[dict] = []
-
-        for file in files:
-            temp_path = await _save_to_temp(file)
-            temp_paths.append(temp_path)
-
-            text = await asyncio.to_thread(extract_text, temp_path)
-            chunks = chunk_text(text)
-
-            for i, chunk_text_str in enumerate(chunks):
-                all_chunk_records.append({
-                    "session_id": session_id,
-                    "filename": file.filename or "unknown",
-                    "chunk_index": i,
-                    "text": chunk_text_str,
-                })
-
-        if not all_chunk_records:
-            raise HTTPException(422, "No text could be extracted from the uploaded files")
-
-        # Embed all chunks in one batched call
         texts = [r["text"] for r in all_chunk_records]
         embeddings = await asyncio.to_thread(embed_texts, texts)
 
@@ -130,17 +76,8 @@ async def upload_and_match(
                 ],
             )
 
-        # Extract keywords from document chunks
-        word_counts: Counter[str] = Counter()
-        for t in texts:
-            terms_str = extract_search_terms(t, max_terms=50)
-            if terms_str:
-                for term in terms_str.split(" | "):
-                    word_counts[term] += 1
-        keywords = [w for w, _ in word_counts.most_common(30)]
-
-        # Run matching
-        results = await run_matching(
+        # Run matching (semantic + BM25 + optional cross-encoder reranking)
+        await run_matching(
             pool, session_id, embeddings, chunk_texts=texts, max_results=max_results,
         )
 
@@ -151,31 +88,108 @@ async def upload_and_match(
                 session_id,
             )
 
-        # Update session status
+        # Mark session as done
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE upload_sessions SET status='done' WHERE id=$1",
                 session_id,
             )
 
-    except HTTPException:
-        raise
     except Exception as exc:
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE upload_sessions SET status='error' WHERE id=$1",
-                session_id,
+        logger.exception("Background processing failed for session %s", session_id)
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE upload_sessions SET status='error' WHERE id=$1",
+                    session_id,
+                )
+        except Exception:
+            pass
+
+
+@router.post("/upload")
+@limiter.limit("10/minute")
+async def upload_and_match(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    files: list[UploadFile] = File(...),
+    max_results: int = Query(default=100, ge=1, le=2000),
+) -> dict:
+    """Upload one or more documents and start async matching against Anki notes.
+
+    Returns immediately with session_id and status 'processing'.
+    Poll GET /api/match/{session_id} until status is 'done'.
+    """
+    pool = get_pool()
+
+    if not files:
+        raise HTTPException(400, "No files provided")
+    if len(files) > settings.max_files_per_session:
+        raise HTTPException(400, f"Max {settings.max_files_per_session} files per upload")
+
+    # Validate file types
+    for file in files:
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(
+                400,
+                f"Unsupported file type: {suffix!r}. "
+                f"Supported: {sorted(SUPPORTED_EXTENSIONS)}",
             )
-        raise HTTPException(500, f"Processing failed: {exc}") from exc
-    finally:
-        for p in temp_paths:
-            p.unlink(missing_ok=True)
+
+    session_id = uuid4()
+
+    # Save files to temp and extract text+chunks (must happen in request context
+    # before response is sent, since UploadFile objects are tied to the request).
+    all_chunk_records: list[dict] = []
+    for file in files:
+        temp_path = await _save_to_temp(file)
+        try:
+            text = await asyncio.to_thread(extract_text, temp_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+        chunks = chunk_text(text)
+        for i, chunk_text_str in enumerate(chunks):
+            all_chunk_records.append({
+                "session_id": session_id,
+                "filename": file.filename or "unknown",
+                "chunk_index": i,
+                "text": chunk_text_str,
+            })
+
+    if not all_chunk_records:
+        raise HTTPException(422, "No text could be extracted from the uploaded files")
+
+    # Extract keywords from document text (fast — no ML)
+    texts = [r["text"] for r in all_chunk_records]
+    word_counts: Counter[str] = Counter()
+    for t in texts:
+        terms_str = extract_search_terms(t, max_terms=50)
+        if terms_str:
+            for term in terms_str.split(" | "):
+                word_counts[term] += 1
+    keywords = [w for w, _ in word_counts.most_common(30)]
+
+    # Create session record with keywords
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO upload_sessions (id, file_count, status, keywords)
+            VALUES ($1, $2, 'processing', $3)
+            """,
+            session_id,
+            len(files),
+            keywords,
+        )
+
+    # Schedule heavy work (embed + match + rerank) as a background task
+    background_tasks.add_task(
+        _process_in_background, pool, session_id, all_chunk_records, max_results
+    )
 
     return {
         "session_id": str(session_id),
-        "file_count": len(files),
-        "total_chunks": len(all_chunk_records),
-        "match_count": len(results),
         "keywords": keywords,
-        "status": "done",
+        "status": "processing",
     }
