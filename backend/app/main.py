@@ -23,12 +23,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Startup: load model + init DB pool. Shutdown: close pool."""
     logger.info("Loading embedding model: %s", settings.embedding_model)
     await asyncio.to_thread(load_model, settings.embedding_model)
-    logger.info("Embedding model loaded.")
+    logger.info("Embedding model loaded — running warmup inference ...")
+    await asyncio.to_thread(embed_query, "warmup")
+    logger.info("Embedding model ready.")
 
     if settings.enable_cross_encoder:
         logger.info("Loading cross-encoder: %s", settings.cross_encoder_model)
         await asyncio.to_thread(load_cross_encoder, settings.cross_encoder_model)
-        logger.info("Cross-encoder loaded.")
+        logger.info("Cross-encoder loaded — running warmup inference ...")
+        from app.embeddings import cross_encode
+        await asyncio.to_thread(cross_encode, [("warmup query", "warmup document")])
+        logger.info("Cross-encoder ready.")
 
     if settings.database_url:
         logger.info("Initializing database pool ...")
