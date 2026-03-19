@@ -127,23 +127,22 @@ These are always shown alongside Method A in the UI:
 
 ### Embedding Strategy
 
-**Pre-computation (one-time, on local 3080 FE):**
-- Generate embeddings for all 28,660 Anki notes using `all-MiniLM-L6-v2` on GPU
-- 384-dimensional vectors × 28,660 notes ≈ **44MB** storage in pgvector
+**Pre-computation (one-time, on local machine with GPU):**
+- Generate embeddings for all 28,660 Anki notes using `FremyCompany/BioLORD-2023` on GPU
+- 768-dimensional vectors × 28,660 notes ≈ **88MB** storage in pgvector
 - Upload pre-computed embeddings to Supabase
-- This runs in seconds on a 3080 (10GB VRAM is massive overkill for an 80MB model)
 
 **Runtime (on server, for user uploads):**
-- `all-MiniLM-L6-v2` runs fast on **CPU only** — no GPU needed on server
-- A typical lecture PDF (chunked into ~20 passages) embeds in < 2 seconds on CPU
+- `BioLORD-2023` runs on **CPU only** on Oracle ARM — no GPU needed
+- Both models (bi-encoder + cross-encoder) are loaded and warmed up at startup to avoid JIT slowness on first request
+- Upload pipeline is **async**: text extraction + keyword extraction happen synchronously, heavy work (embed + match + rerank) runs in a background task
+- Frontend polls GET /api/match/{session_id} every 3 seconds until results are ready
 - Zero API costs, no rate limits, no external dependencies
-- Alternative fallback: Google Gemini embedding API (free tier) if CPU is too slow
 
-**Why not a larger model?**
-- `all-MiniLM-L6-v2` (22M params, 80MB) is the sweet spot for this use case
-- Medical vocabulary is well-represented in its training data
-- 384-dim vectors keep Supabase storage under the 500MB free limit
-- Upgrading to `bge-large-en-v1.5` (1.3GB, 1024-dim) is easy later if quality needs improvement
+**Why BioLORD-2023?**
+- Medical-ontology-aware training data — outperforms general models on biomedical text
+- 768-dim vectors with 512 token max
+- Pairs well with `ncbi/MedCPT-Cross-Encoder` for reranking
 
 ### System Diagram
 
@@ -174,10 +173,11 @@ These are always shown alongside Method A in the UI:
    - Generate embeddings on local 3080 FE (fast)
    - Upload embeddings + metadata to Supabase pgvector
 
-2. **Document Upload (per request)**
-   - User uploads file → backend extracts text
-   - Chunk into passages (~512 tokens each)
-   - Generate embeddings on server CPU (`all-MiniLM-L6-v2`)
+2. **Document Upload (per request, async)**
+   - User uploads file → backend extracts text + keywords synchronously
+   - Returns immediately with session_id and status `"processing"`
+   - Background task: chunk → embed (BioLORD-2023 on CPU) → hybrid search → cross-encoder rerank
+   - Frontend polls until status is `"done"`
 
 3. **Matching**
    - Query pgvector: find top-K cards similar to each document chunk
@@ -306,11 +306,11 @@ Works if you prefer AWS, but **expires after 12 months** then costs ~$15-25/mont
 
 | Data | Estimated Size |
 |------|---------------|
-| 28,660 note embeddings (384-dim float32) | ~44MB |
+| 28,660 note embeddings (768-dim float32) | ~88MB |
 | Note metadata (text, tags, IDs) | ~50MB |
-| Indexes | ~30MB |
-| Headroom for user session data | ~376MB (Supabase) or ~19.8GB (RDS) |
-| **Total** | **~124MB used** |
+| Indexes | ~50MB |
+| Headroom for user session data | ~312MB (Supabase) or ~19.8GB (RDS) |
+| **Total** | **~188MB used** |
 
 ### Supabase Inactivity Note
 Supabase free tier pauses databases after 7 days of no activity. For a tool with 5-200 users, this shouldn't be an issue — but if it is, a simple cron ping from the backend server keeps it alive.
@@ -332,7 +332,15 @@ Supabase free tier pauses databases after 7 days of no activity. For a tool with
 
 ## Success Metrics
 
-- Users can upload a lecture PDF and receive relevant Anki cards within 5 seconds
+- Users can upload a lecture PDF and receive relevant Anki cards within 60 seconds (cross-encoder reranking on ARM CPU adds ~30-50s)
 - Relevancy slider meaningfully changes the result set
 - Matched cards align with the topic of the uploaded material (validated by manual review)
 - Anki suspend/unsuspend workflow completes in under 30 seconds
+
+## Live Deployment
+
+| | URL |
+|---|---|
+| **Frontend** | https://YOUR_FRONTEND_DOMAIN |
+| **Backend** | https://YOUR_BACKEND_DOMAIN |
+| **Health check** | https://YOUR_BACKEND_DOMAIN/health |
