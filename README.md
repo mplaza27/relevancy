@@ -1,59 +1,73 @@
-# relevancy
+# Relevancey
 
-A system that takes learning resources (PPTs, videos/transcripts, or syllabi) as input and retrieves the most relevant flashcards from a database to aid studying.
+Match uploaded medical lecture materials against AnKing Anki cards by semantic similarity.
 
-## How It Works
+**Live at [YOUR_FRONTEND_DOMAIN](https://YOUR_FRONTEND_DOMAIN)**
 
-1. **Input Processing**: Extracts text from various resource formats
-2. **Embedding Generation**: Converts content into vector representations
-3. **Similarity Search**: Finds semantically similar flashcards in the database
-4. **Results**: Returns ranked flashcards relevant to the input material
+## What it does
 
-## Possible Tech Stacks
+Upload a PDF, PPTX, DOCX, TXT, or MD file from a lecture or textbook chapter. Relevancey finds the AnKing Step Deck cards most relevant to that material, lets you tune a relevancy threshold slider, and generates an Anki sync script to suspend/unsuspend cards in your local Anki.
 
-### Option 1: Python-First Stack
-- **Text Extraction**: `python-pptx`, `pymupdf`, `whisper` (for transcripts)
-- **Embeddings**: `sentence-transformers` or OpenAI embeddings
-- **Vector DB**: ChromaDB, Pinecone, or Weaviate
-- **API**: FastAPI with `uvicorn`
-- **CLI**: `typer` or `click`
+## Stack
 
-### Option 2: Lightweight Stack
-- **Embeddings**: Ollama with local models (e.g., `nomic-embed-text`)
-- **Vector DB**: ChromaDB (in-memory or persistent)
-- **Framework**: `chainlit` or simple `argparse` CLI
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React + TypeScript + Vite + shadcn/ui + Tailwind |
+| Backend | FastAPI + asyncpg (Python 3.12) |
+| Embeddings | BioLORD-2023 (768-dim) + MedCPT-Cross-Encoder |
+| Search | pgvector semantic + BM25 tsvector with RRF fusion → cross-encoder reranking |
+| Database | Supabase free tier PostgreSQL + pgvector |
+| Backend hosting | Oracle Cloud Always Free (4 ARM cores, 24GB RAM) |
+| Frontend hosting | Cloudflare Pages |
+| CI/CD | GitHub Actions (auto-deploy to Oracle on push) |
 
-### Option 3: Cloud-Native Stack
-- **Embeddings**: AWS Bedrock, Google Vertex AI, or OpenAI API
-- **Vector DB**: Pinecone, Weaviate Cloud, or Supabase pgvector
-- **Deployment**: Docker + AWS Lambda or Google Cloud Run
+## How it works
 
-## Implementation Approaches
+1. **Upload** — backend extracts text and keywords, returns a session ID immediately
+2. **Processing** — background task embeds chunks, runs hybrid search against 28,660 AnKing notes, reranks with cross-encoder
+3. **Results** — frontend polls until done, then shows ranked cards with similarity scores
+4. **Sync** — download a Python script that uses AnkiConnect to unsuspend only the matched cards in your local Anki
 
-### Phase 1: Core Pipeline
-1. Build text extractors for PPT (`.pptx`), PDF (`.pdf`), and plain text (`.txt`, `.md`)
-2. Implement embedding generation with a local model
-3. Set up vector DB with initial flashcard collection
-4. Create similarity search endpoint
+## Local development
 
-### Phase 2: Enhancements
-- Add video transcript support via Whisper or assemblyAI
-- Support for syllabus parsing (structured text extraction)
-- Re-ranking with cross-encoders for better relevance
-- Caching layer for frequently queried resources
-
-### Phase 3: Polish
-- CLI interface for batch processing
-- Web UI for interactive search
-- Flashcard import/export (Anki, Quizlet formats)
-- User feedback loop to improve retrieval
-
-## Getting Started
-
+**Backend:**
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+cd backend
+cp .env.example .env  # fill in DATABASE_URL
+python3.12 -m venv .venv
+.venv/bin/pip install -e ../packages/anki_parser -e .
+.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8020 --app-dir .
+```
 
-# Run the CLI
-python main.py --input lecture.pdf
+**Frontend:**
+```bash
+cd frontend
+npm install
+npm run dev  # runs on http://localhost:5173
+```
+
+## Deployment
+
+- **Backend**: Oracle Cloud Always Free at `https://YOUR_BACKEND_DOMAIN`, served via nginx + Let's Encrypt SSL
+- **Frontend**: Cloudflare Pages at `https://YOUR_FRONTEND_DOMAIN`
+- **Auto-deploy**: GitHub Actions SSHes into Oracle and restarts the service on every push to master
+
+See `oracle-manual-steps.md` for the full Oracle setup guide.
+
+## Database schema
+
+See `sql/schema.sql`. Run migrations in order after initial setup:
+- `sql/migration_v2_biolord.sql` — BioLORD-2023 (768-dim) + BM25 hybrid search
+- `sql/migration_v3_async.sql` — keywords column for async upload pipeline
+
+## Project structure
+
+```
+relevancy/
+├── packages/anki_parser/   # Standalone Anki .apkg parser (reusable)
+├── backend/app/            # FastAPI application
+├── frontend/src/           # React application
+├── scripts/                # Pre-compute embeddings + upload to Supabase
+├── sql/                    # Schema + migrations
+└── .github/workflows/      # CI/CD
 ```
