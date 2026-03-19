@@ -29,13 +29,17 @@ def _min_max_normalize(scores: list[float]) -> list[float]:
     return [(s - lo) / (hi - lo) for s in scores]
 
 
+# Max characters fed to cross-encoder per text — keeps sequence length short (BERT is O(n²))
+_CE_MAX_CHARS = 400
+
+
 async def run_matching(
     pool: asyncpg.Pool,
     session_id: UUID,
     chunk_embeddings: np.ndarray,
     chunk_texts: list[str] | None = None,
-    semantic_limit_per_chunk: int = 500,
-    bm25_limit_per_chunk: int = 300,
+    semantic_limit_per_chunk: int = 300,
+    bm25_limit_per_chunk: int = 200,
     max_results: int = 100,
 ) -> list[dict]:
     """Match document chunks against Anki notes via hybrid search + reranking.
@@ -72,10 +76,10 @@ async def run_matching(
     if not aggregated:
         return []
 
-    # --- 2. Sort by RRF, take top 2x max_results for cross-encoder ---
+    # --- 2. Sort by RRF, take top candidates for cross-encoder ---
     sorted_candidates = sorted(aggregated.items(), key=lambda x: x[1][0], reverse=True)
-    # Cross-encode 2x max_results so reranking has room to reshuffle
-    rerank_pool_size = min(len(sorted_candidates), max_results * 2)
+    # Cap at max_results + 50 — enough headroom for reranking without scoring too many pairs
+    rerank_pool_size = min(len(sorted_candidates), max_results + 50)
     rerank_candidates = sorted_candidates[:rerank_pool_size]
     rerank_nids = [nid for nid, _ in rerank_candidates]
 
@@ -109,8 +113,8 @@ async def run_matching(
             if nid not in note_data:
                 continue
             nd = note_data[nid]
-            note_text = f"{nd['text']} {nd.get('extra', '') or ''}".strip()
-            chunk_text = chunk_texts[best_chunk_idx]
+            note_text = f"{nd['text']} {nd.get('extra', '') or ''}".strip()[:_CE_MAX_CHARS]
+            chunk_text = chunk_texts[best_chunk_idx][:_CE_MAX_CHARS]
             pairs.append((chunk_text, note_text))
             pair_nids.append(nid)
 
