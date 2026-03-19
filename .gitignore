@@ -32,6 +32,9 @@ node_modules/
 *.tmp
 temp.md
 
+# Project instructions (contains server details)
+CLAUDE.md
+
 # Scripts output
 scripts/output/
 reserve_oracle.sh
